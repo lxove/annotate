@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Annotate (localhost)",
+  "version": "0.2.0",
+  "description": "Klicka och rita på lokala sidor och skicka kommentarer till en Claude Code-session.",
+  "content_scripts": [
+    {
+      "matches": ["*://localhost/*", "*://127.0.0.1/*", "*://*.localhost/*", "*://*.test/*"],
+      "js": ["react-probe.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["*://localhost/*", "*://127.0.0.1/*", "*://*.localhost/*", "*://*.test/*"],
+      "js": ["key-guard.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["*://localhost/*", "*://127.0.0.1/*", "*://*.localhost/*", "*://*.test/*"],
+      "js": ["overlay.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
