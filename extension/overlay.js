@@ -39,6 +39,9 @@
            box-shadow: 0 2px 6px rgba(0,0,0,.3); border: 2px solid #fff; transition: transform .1s; }
     .pin:hover { transform: scale(1.15); }
     .pin.done { opacity: .55; }
+    .pin.elsewhere { border-style: dashed; opacity: .55; }
+    .card .elsewhere { display: block; margin-bottom: 6px; color: #6b7280; font-size: 11px; }
+    .card .elsewhere a { color: #3b82f6; }
     .pin.working, .pin.verifying { animation: pulse 1.2s infinite; }
     .pin.choose, .pin.question { animation: attention 1s infinite; }
     @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(139,92,246,.35); } }
@@ -112,6 +115,10 @@
   const verified = new Set(); // "id:verify_round" som redan fått en efter-bild härifrån
 
   const pageUrl = () => location.pathname + location.search;
+  // Bubblor visas på samma sökväg även om query-strängen (filter, sortering, sida) har ändrats.
+  // Exakt adress krävs fortfarande för efter-bilder och för att hoppa till det som väntar.
+  const isExact = (a) => a.url === pageUrl();
+  const onPage = (a) => a.url.split(/[?#]/)[0] === location.pathname;
   const isOurs = (e) => e.composedPath().includes(host);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -275,7 +282,7 @@
   }
 
   function render() {
-    const mine = items.filter((a) => a.url === pageUrl());
+    const mine = items.filter(onPage);
     pinsEl.innerHTML = '';
     mine.forEach((a, i) => {
       const p = pinPos(a);
@@ -287,7 +294,7 @@
         pinsEl.appendChild(box);
       }
       const pin = document.createElement('div');
-      pin.className = 'pin ' + a.status;
+      pin.className = 'pin ' + a.status + (isExact(a) ? '' : ' elsewhere');
       pin.textContent = a.status === 'choose' ? `${i + 1} A/B` : a.status === 'question' ? `${i + 1} ?` : i + 1;
       pin.title = `${LABELS[a.status] || a.status}: ${a.comment}`;
       Object.assign(pin.style, { left: p.x + 'px', top: p.y + 'px', background: color });
@@ -323,7 +330,7 @@
     const next = items.find((a) => NEEDS_YOU.has(a.status) && a.url === pageUrl()) || items.find((a) => NEEDS_YOU.has(a.status));
     if (!next) return;
     if (next.url !== pageUrl()) { location.href = next.url; return; }
-    const mine = items.filter((a) => a.url === pageUrl());
+    const mine = items.filter(onPage);
     const p = pinPos(next);
     scrollTo({ top: Math.max(0, p.y - 120), behavior: 'smooth' });
     showInfo(next, mine.indexOf(next) + 1, p);
@@ -396,6 +403,7 @@
 
     card.innerHTML = `
       <div class="meta">#${n} · ${LABELS[a.status] || a.status}${a.project ? ' · ' + esc(a.project) : ''} · id ${a.id}</div>
+      ${isExact(a) ? '' : `<span class="elsewhere">Gjord med andra filter eller sortering. <a href="${esc(a.url)}">Öppna den adressen</a></span>`}
       ${editable ? `<textarea>${esc(a.comment)}</textarea>` : `<div class="comment">${esc(a.comment)}</div>`}
       ${thread.map((t) => `<div class="bubble ${t.from}">${esc(t.text)}</div>`).join('')}
       ${a.status === 'question' ? '<textarea id="answer" placeholder="Ditt svar…"></textarea>' : ''}
@@ -582,8 +590,8 @@
     if (reopenId) {
       session.set('annotate-open', '');
       const a = items.find((x) => String(x.id) === reopenId);
-      if (a && a.url === pageUrl()) {
-        const mine = items.filter((x) => x.url === pageUrl());
+      if (a && onPage(a)) {
+        const mine = items.filter(onPage);
         showInfo(a, mine.indexOf(a) + 1, pinPos(a));
       }
     }
