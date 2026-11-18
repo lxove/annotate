@@ -10,6 +10,7 @@
 //   annotate allow-host <host>                   tillåt ett lokalt hostnamn utöver localhost, *.test, *.localhost
 //   annotate server | start | stop | status
 import { spawn, execSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { openSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,10 +62,18 @@ function needId(id) {
   return a;
 }
 
+// Fält som kommer från sidan själv (url, html, selector, komponentnamn) skrivs ut inom en
+// markör som slumpas per körning. Sidan kan inte gissa den och därför inte "stänga" blocket
+// och skriva egna instruktioner efter. Skillen behandlar allt inom markören som data.
+const PAGE_TAG = `sidinnehåll-${randomBytes(4).toString('hex')}`;
+const oneLine = (s) => String(s).replace(/\s+/g, ' ').replaceAll(PAGE_TAG, '');
+// Användarens egen text: flera rader är tillåtna men indenteras, så att de inte ser ut som egna fält.
+const indent = (s) => String(s).replace(/\r?\n/g, '\n               ');
+
 function printAnnotation(a) {
-  console.log(`#${a.id} [${a.kind === 'area' ? 'yta' : 'element'}] ${a.origin}${a.url}`);
-  console.log(`  kommentar:   ${a.comment}`);
-  for (const t of parseJson(a.thread, [])) console.log(`  ${t.from === 'agent' ? 'du frågade: ' : 'svar:       '}${t.text}`);
+  console.log(`#${a.id} [${a.kind === 'area' ? 'yta' : 'element'}] ${a.origin}`);
+  console.log(`  kommentar:   ${indent(a.comment)}`);
+  for (const t of parseJson(a.thread, [])) console.log(`  ${t.from === 'agent' ? 'du frågade: ' : 'svar:       '}${indent(t.text)}`);
 
   const variants = parseJson(a.variants, []);
   if (a.choice) {
@@ -77,11 +86,15 @@ function printAnnotation(a) {
     console.log(`               (värde ${keys}, A som standard) och kör: annotate variants ${a.id} "etikett A" "etikett B" …`);
   }
 
-  if (a.components) console.log(`  komponenter: ${a.components}   (innerst först)`);
-  console.log(`  selector:    ${a.selector ?? '-'}${a.kind === 'area' ? '   (minsta container runt ytan)' : ''}`);
   console.log(`  position:    ${fmt(a.rect)}   (viewport ${fmt(a.viewport)})`);
   if (existsSync(shotPath(a.id, 'before'))) console.log(`  före-bild:   ${shotPath(a.id, 'before')}   (det användaren såg, läs bilden)`);
-  if (a.html) console.log(`  html:        ${a.html.replace(/\s+/g, ' ').slice(0, 500)}`);
+
+  console.log(`  <${PAGE_TAG}>`);
+  console.log(`  sida:        ${oneLine(a.url)}`);
+  if (a.components) console.log(`  komponenter: ${oneLine(a.components)}   (innerst först)`);
+  console.log(`  selector:    ${a.selector ? oneLine(a.selector) : '-'}${a.kind === 'area' ? '   (minsta container runt ytan)' : ''}`);
+  if (a.html) console.log(`  html:        ${oneLine(a.html).slice(0, 500)}`);
+  console.log(`  </${PAGE_TAG}>`);
   console.log();
 }
 
@@ -129,17 +142,27 @@ switch (cmd) {
     // Nya/besvarade annoteringar och gjorda val, plus egna som blev kvar (t.ex. efter en avbruten session).
     const pending = db.prepare(`SELECT * FROM annotations WHERE origin IN (${ph})
       AND (status IN ('open', 'chosen') OR (status IN ('working', 'verifying') AND project = ?)) ORDER BY id`);
-    const claim = db.prepare(`UPDATE annotations SET status = 'working', project = ?, updated_at = datetime('now') WHERE id = ?`);
+    // Villkorat: om en annan session hann ta annoteringen mellan SELECT och UPDATE ändras ingen rad.
+    const claim = db.prepare(`UPDATE annotations SET status = 'working', project = ?, updated_at = datetime('now')
+      WHERE id = ? AND (status IN ('open', 'chosen') OR (status IN ('working', 'verifying') AND project = ?))`);
+
+    // Två sessioner på samma origin skulle tävla om samma annoteringar. Varna, men stoppa inte.
+    const watcher = db.prepare('SELECT * FROM watchers WHERE origin = ?');
+    for (const o of flags.origin) {
+      const w = watcher.get(o);
+      if (w && w.cwd !== process.cwd() && Date.now() - w.last_seen < 15_000) {
+        console.error(`Varning: ${w.project} (${w.cwd}) lyssnar redan på ${o}. Två sessioner delar då på annoteringarna.`);
+      }
+    }
 
     let rows;
     for (;;) {
       if (process.ppid === 1) process.exit(0); // föräldern (sessionen) är borta
       for (const o of flags.origin) heartbeat.run(o, project, process.cwd(), Date.now());
-      rows = pending.all(...flags.origin, project);
+      rows = pending.all(...flags.origin, project).filter((r) => claim.run(project, r.id, project).changes === 1);
       if (rows.length) break;
       await sleep(500);
     }
-    for (const r of rows) claim.run(project, r.id);
 
     console.log(`${rows.length} annotering(ar) att hantera:\n`);
     rows.forEach(printAnnotation);
@@ -235,20 +258,15 @@ switch (cmd) {
     break;
   }
 
-  // Tillåt ett hostnamn i både servern (config.json) och tillägget (manifest.json).
+  // Tillåt ett hostnamn. Servern läser config.json direkt; tillägget hämtar listan från
+  // servern (GET /hosts) när det laddas om, så manifest.json i repot ändras aldrig.
   case 'allow-host': {
     const host = positional[0] && new URL(normalizeOrigin(positional[0])).hostname;
     if (!host) throw new Error('annotate allow-host <host>, t.ex. annotate allow-host myapp.local');
     const cfg = readConfig();
     if (!cfg.hosts.includes(host)) cfg.hosts.push(host);
     writeFileSync(CONFIG, JSON.stringify(cfg, null, 2) + '\n');
-
-    const manifestPath = fileURLToPath(new URL('../extension/manifest.json', import.meta.url));
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    for (const cs of manifest.content_scripts) {
-      if (!cs.matches.includes(`*://${host}/*`)) cs.matches.push(`*://${host}/*`);
-    }
-    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+    await ensureServer();
     console.log(`${host} tillåten. Ladda om tillägget (↻ i chrome://extensions) och sedan sidan.`);
     break;
   }

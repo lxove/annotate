@@ -68,7 +68,8 @@ annotate clear-done [--origin o]
 
 ## Andra lokala hostnamn
 `localhost`, `127.0.0.1`, `*.localhost` och `*.test` (t.ex. `https://fishstew.test`) fungerar direkt.
-För andra namn, t.ex. `myapp.local`: kör `annotate allow-host myapp.local` och ladda om tillägget.
+För andra namn, t.ex. `myapp.local`: kör `annotate allow-host myapp.local` och ladda om tillägget (↻).
+Hostnamnen sparas i `~/.annotate/config.json` och tillägget hämtar dem från servern, så repot ändras inte.
 
 ## Tangentbord och fokus
 När en bubbla är öppen ser sidan inga tangenttryck, klick eller fokusändringar från den. Sidans kortkommandon
@@ -82,6 +83,12 @@ eller när Claude ber om en efter-bild för en sida du har öppen.
 Servern binder bara till 127.0.0.1 och tar bara emot anrop från lokala origins (se ovan). `.localhost` och `.test`
 är reserverade toppdomäner som bara kan peka hit via din egen konfiguration. En vanlig webbplats kan alltså inte
 lägga in "instruktioner" som din Claude-session sedan utför.
+
+Din *lokala* app kan däremot visa innehåll som du inte själv har skrivit, t.ex. användardata från en databasdump.
+Html-utdrag, selector, komponentnamn och adress skickas därför till Claude inom en markör som slumpas per körning,
+och skillen behandlar allt där som data, aldrig som instruktioner. Bara din kommentar och dina svar räknas som
+instruktioner. Det är ett skydd, inte en garanti: annotera inte sidor med innehåll du inte litar på i en session
+med breda behörigheter.
 
 ## Utan Chrome-tillägget
 Lägg till `<script src="http://127.0.0.1:4747/overlay.js"></script>` i dev-läge. Det fungerar inte på sidor

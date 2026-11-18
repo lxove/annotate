@@ -1,6 +1,36 @@
-// Bakgrundsprocess: skärmdumpar av den synliga fliken (bara tillägg får ta dem)
-// och badge på ikonen med antal saker som väntar på användaren.
+// Bakgrundsprocess: skärmdumpar av den synliga fliken (bara tillägg får ta dem),
+// badge på ikonen med antal saker som väntar på användaren, och innehållsskript
+// för extra hostnamn från `annotate allow-host`.
 const MAX_WIDTH = 1600;
+const API = 'http://127.0.0.1:4747';
+
+// Standardhostnamnen ligger i manifest.json. Extra hostnamn (t.ex. myapp.local) hämtas från
+// servern och registreras här, så att manifestet aldrig behöver ändras lokalt.
+// Registreringarna sparas mellan Chrome-starter, så det gör inget om servern inte kör just då.
+const EXTRA = [
+  { id: 'annotate-react-probe', js: ['react-probe.js'], world: 'MAIN', runAt: 'document_start' },
+  { id: 'annotate-key-guard', js: ['key-guard.js'], runAt: 'document_start' },
+  { id: 'annotate-overlay', js: ['overlay.js'], runAt: 'document_idle' },
+];
+
+async function syncHosts() {
+  let hosts;
+  try {
+    hosts = (await (await fetch(`${API}/hosts`)).json()).hosts;
+  } catch {
+    return; // servern kör inte: behåll det som redan är registrerat
+  }
+  const ids = EXTRA.map((s) => s.id);
+  const existing = (await chrome.scripting.getRegisteredContentScripts({ ids })).map((s) => s.id);
+  if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: existing });
+  if (!hosts?.length) return;
+  const matches = hosts.map((h) => `*://${h}/*`);
+  await chrome.scripting.registerContentScripts(EXTRA.map((s) => ({ ...s, matches, persistAcrossSessions: true })));
+}
+
+// onInstalled körs även när tillägget laddas om med ↻ i chrome://extensions.
+chrome.runtime.onInstalled.addListener(syncHosts);
+chrome.runtime.onStartup.addListener(syncHosts);
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'capture') {

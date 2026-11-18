@@ -9,6 +9,9 @@
   "action": {
     "default_title": "Annotate – antal som väntar på dig"
   },
+  "permissions": [
+    "scripting"
+  ],
   "host_permissions": [
     "<all_urls>"
   ],
